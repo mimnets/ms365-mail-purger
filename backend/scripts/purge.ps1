@@ -14,7 +14,6 @@ param(
     [string]$CertPath,
     [string]$CertPass,
     [string]$Organization,
-    [string]$TenantId,
     [string]$Email,
     [string]$DateFrom,
     [string]$DateTo,
@@ -35,7 +34,6 @@ try {
         -CertificateFilePath $CertPath `
         -CertificatePassword $secPass `
         -Organization $Organization `
-        -TenantId $TenantId `
         -ErrorAction Stop
 
     Write-Output "STATUS|Connected"
