@@ -113,7 +113,7 @@ def delete_org(org_id: str, db: Session = Depends(get_db)):
 @app.post("/api/orgs/{org_id}/certificate")
 def generate_org_certificate(org_id: str, db: Session = Depends(get_db)):
     """
-    Generate a new self-signed certificate for Connect-IPPSSession auth.
+    Generate a new self-signed certificate for MSAL Graph API auth.
     Returns JSON with the .cer file as base64 (to avoid CORS binary issues).
     Stores the encrypted PFX in the database.
     """
@@ -203,12 +203,24 @@ async def get_mailbox_stats(email: str):
 @app.post("/api/search/preview", response_model=SearchPreviewResponse)
 async def search_preview(req: SearchPreviewRequest):
     try:
-        count = await graph.count_messages(req.user_email, req.date_from, req.date_to)
+        primary_count = await graph.count_messages(req.user_email, req.date_from, req.date_to)
+
+        # Also count archive messages if archive folder exists
+        archive_count = 0
+        archive_folder_id = await graph.get_archive_folder_id(req.user_email)
+        if archive_folder_id:
+            archive_count = await graph.count_archive_messages(
+                req.user_email, archive_folder_id, req.date_from, req.date_to
+            )
+
+        total = primary_count + archive_count
         return SearchPreviewResponse(
             user_email=req.user_email,
             date_from=req.date_from,
             date_to=req.date_to,
-            estimated_count=count,
+            estimated_count=total,
+            estimated_primary_count=primary_count,
+            estimated_archive_count=archive_count,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -306,67 +318,47 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
 def health():
     return {"status": "ok", "version": "2.0.0"}
 
-@app.get("/api/debug/test-connection/{org_id}")
-def debug_test_connection(org_id: str, db: Session = Depends(get_db)):
-    """Test Connect-IPPSSession connection with stored creds and return full output."""
-    import subprocess, tempfile, base64, os
+@app.get("/api/debug/graph-token/{org_id}")
+def debug_graph_token(org_id: str, db: Session = Depends(get_db)):
+    """Test Graph API token acquisition with stored cert (no pwsh needed)."""
+    import base64
     from cert_utils import decrypt_value, get_fernet
     from models import Organization
+    from purge_engine import _extract_private_key_pem, acquire_graph_token
     
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         return {"error": "Org not found"}
     
-    fernet = get_fernet()
-    pfx_b64 = decrypt_value(org.certificate_pfx, fernet)
-    cert_pass = decrypt_value(org.certificate_password, fernet)
-    raw_pfx = base64.b64decode(pfx_b64)
-    
-    fd, cert_path = tempfile.mkstemp(suffix=".pfx")
-    os.write(fd, raw_pfx)
-    os.close(fd)
-    
-    test_script = f'''
-$ErrorActionPreference = "Stop"
-try {{
-    Import-Module ExchangeOnlineManagement -Force
-    Write-Output "MODULE_OK"
-    
-    $secPass = ConvertTo-SecureString -String "{cert_pass}" -AsPlainText -Force
-    
-    Write-Output "Connecting with AppId={org.app_client_id} Org={org.tenant_domain}"
-    Connect-IPPSSession -AppId "{org.app_client_id}" -CertificateFilePath "{cert_path}" -CertificatePassword $secPass -Organization "{org.tenant_domain}" -ErrorAction Stop -Verbose 4>&1
-    Write-Output "CONNECT_OK"
-    
-    Write-Output "Testing compliance search..."
-    $searchName = "Test_Conn_$(Get-Date -Format 'yyyyMMddHHmmss')"
-    New-ComplianceSearch -Name $searchName -ExchangeLocation "monir.it@vclbd.net" -ContentMatchQuery "received:01/01/2025..01/02/2025" -ErrorAction Stop | Out-Null
-    Write-Output "SEARCH_CREATED"
-    
-    Remove-ComplianceSearch -Identity $searchName -Confirm:$false -ErrorAction SilentlyContinue
-    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
-    
-}} catch {{
-    Write-Output "ERROR|$_"
-    exit 1
-}}
-'''
-    
-    result = subprocess.run(
-        ["pwsh", "-NoLogo", "-NoProfile", "-Command", test_script],
-        capture_output=True, text=True, timeout=120
-    )
-    
-    # Cleanup
-    try: os.unlink(cert_path)
-    except: pass
-    
-    return {
-        "exit_code": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "org_name": org.name,
-        "app_id": org.app_client_id,
-        "tenant_domain": org.tenant_domain,
-        "cert_thumbprint": org.certificate_thumbprint,
-    }
+    try:
+        fernet = get_fernet()
+        cert_pfx_b64 = decrypt_value(org.certificate_pfx, fernet)
+        cert_pass_plain = decrypt_value(org.certificate_password, fernet)
+        
+        try:
+            raw_pfx = base64.b64decode(cert_pfx_b64)
+        except Exception:
+            raw_pfx = cert_pfx_b64.encode("latin-1")
+        
+        private_key_pem = _extract_private_key_pem(raw_pfx, cert_pass_plain)
+        token = acquire_graph_token(
+            client_id=org.app_client_id,
+            tenant_id=org.tenant_id,
+            private_key_pem=private_key_pem,
+            thumbprint=org.certificate_thumbprint,
+        )
+        
+        return {
+            "success": True,
+            "token_prefix": token[:50] + "...",
+            "org_name": org.name,
+            "app_id": org.app_client_id,
+            "tenant_id": org.tenant_id,
+            "tenant_domain": org.tenant_domain,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "org_name": org.name,
+        }

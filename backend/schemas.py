@@ -22,6 +22,8 @@ class SearchPreviewResponse(BaseModel):
     date_from: str
     date_to: str
     estimated_count: int
+    estimated_primary_count: int = 0
+    estimated_archive_count: int = 0
 
 
 class PurgeJobResponse(BaseModel):
@@ -38,6 +40,7 @@ class PurgeJobResponse(BaseModel):
     completed_at: Optional[datetime] = None
     eta_seconds: Optional[int] = None
     error_message: Optional[str] = None
+    status_message: Optional[str] = None
 
     class Config:
         from_attributes = True

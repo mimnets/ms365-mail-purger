@@ -31,6 +31,7 @@ class PurgeJob(Base):
     completed_at = Column(DateTime, nullable=True)
     error_message = Column(String, nullable=True)
     celery_task_id = Column(String, nullable=True)
+    status_message = Column(String, nullable=True)
 
 
 class Organization(Base):
