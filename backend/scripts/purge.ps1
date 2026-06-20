@@ -17,7 +17,8 @@ param(
     [string]$Email,
     [string]$DateFrom,
     [string]$DateTo,
-    [string]$JobId
+    [string]$JobId,
+    [string]$AccessToken
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,16 +31,10 @@ try {
 
     Write-Output "STATUS|Connecting to $Organization"
 
-    # Load certificate from PFX file (Linux-compatible)
-    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath, $CertPass)
-
-    # Use Connect-ExchangeOnline with compliance endpoint URI
-    # (different internal code path from Connect-IPPSSession)
-    Connect-ExchangeOnline `
-        -AppId $AppId `
-        -Certificate $cert `
+    # Use pre-acquired access token (bypasses cert auth + session setup bugs on Linux)
+    Connect-IPPSSession `
+        -AccessToken $AccessToken `
         -Organization $Organization `
-        -ConnectionUri "https://ps.compliance.protection.outlook.com/powershell-liveid/" `
         -ErrorAction Stop
 
     Write-Output "STATUS|Connected"

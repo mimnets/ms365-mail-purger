@@ -4,6 +4,8 @@ import time
 import os
 import tempfile
 import traceback
+import base64
+import msal
 from datetime import datetime
 from celery_app import celery_app
 from database import SessionLocal
@@ -64,27 +66,49 @@ def purge_loop(self, job_id: str, org_id: str, user_email: str, date_from: str, 
         if not org.certificate_pfx or not org.certificate_password:
             raise ValueError(f"Organization '{org.name}' has no certificate configured. Generate one in Settings first.")
 
+        # Get access token using MSAL in Python (avoids pwsh cert handling bugs on Linux)
         cert_pfx_bytes_b64 = decrypt_value(org.certificate_pfx, fernet)
         cert_pass_plain = decrypt_value(org.certificate_password, fernet)
 
-        # Write cert to temp file (pwsh can read PFX files directly)
-        cert_data = cert_pfx_bytes_b64.encode()  # base64 encoded bytes from encryption
-        # Actually decrypt_value returns the plaintext which is the base64-encoded cert bytes
-        # Let me fix this: certificate_pfx stores the raw PFX bytes base64-encoded then fernet-encrypted
-        # So after decrypt_value, we get back the base64 string of the PFX
-        # We need to decode base64 to get raw PFX bytes
-        import base64
         try:
             raw_pfx = base64.b64decode(cert_pfx_bytes_b64)
         except Exception:
-            # Maybe it's already raw bytes in string form
             raw_pfx = cert_pfx_bytes_b64.encode('latin-1')
 
+        # Write cert to temp file for MSAL (it also needs the PFX)
         fd, temp_cert_path = tempfile.mkstemp(suffix=".pfx")
         os.write(fd, raw_pfx)
         os.close(fd)
 
-        # ── Build pwsh args ─────────────────────────────────────────────────
+        # Acquire token with MSAL (extract private key from PFX first)
+        from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
+
+        private_key, cert, additional_certs = pkcs12.load_key_and_certificates(raw_pfx, cert_pass_plain.encode())
+        private_key_pem = private_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption()
+        )
+
+        authority = f"https://login.microsoftonline.com/{org.tenant_id}"
+        scope = ["https://ps.compliance.protection.outlook.com/.default"]
+
+        app = msal.ConfidentialClientApplication(
+            org.app_client_id,
+            authority=authority,
+            client_credential={
+                "private_key": private_key_pem.decode(),
+                "thumbprint": org.certificate_thumbprint,
+            },
+        )
+
+        result = app.acquire_token_for_client(scopes=scope)
+        if "access_token" not in result:
+            raise RuntimeError(f"Token acquisition failed: {result.get('error_description', result)}")
+
+        access_token = result["access_token"]
+
+        # ── Build pwsh args (uses pre-acquired token instead of cert) ──────
         args = [
             "pwsh", "-NoLogo", "-NoProfile", "-File", SCRIPT_PATH,
             "-AppId", org.app_client_id,
@@ -95,6 +119,7 @@ def purge_loop(self, job_id: str, org_id: str, user_email: str, date_from: str, 
             "-DateFrom", date_from,
             "-DateTo", date_to,
             "-JobId", job_id,
+            "-AccessToken", access_token,
         ]
 
         # ── Execute pwsh and parse output ───────────────────────────────────
