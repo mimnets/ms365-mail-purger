@@ -119,22 +119,27 @@ async def get_archive_folder_id(user_email: str) -> Optional[str]:
     Find the in-place archive folder ID for a user.
     Returns the archive folder ID, or None if no archive is configured.
     """
-    url = f"{GRAPH_BASE}/users/{user_email}/mailFolders"
-    # wellKnownName is NOT filterable in Graph API, so fetch all and filter locally
-    params = {"$select": "id,displayName,wellKnownName", "$top": 50}
+    try:
+        url = f"{GRAPH_BASE}/users/{user_email}/mailFolders"
+        params = {"$select": "id,displayName", "$top": 50}
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers=_headers(), params=params)
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", 30))
-            await asyncio.sleep(retry_after)
-            return await get_archive_folder_id(user_email)
-        resp.raise_for_status()
-        folders = resp.json().get("value", [])
-        for folder in folders:
-            if folder.get("wellKnownName") == "archive":
-                return folder["id"]
-        return None
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=_headers(), params=params)
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 30))
+                await asyncio.sleep(retry_after)
+                return await get_archive_folder_id(user_email)
+            resp.raise_for_status()
+            folders = resp.json().get("value", [])
+            # Look for archive by display name (most reliable approach)
+            for folder in folders:
+                name = (folder.get("displayName") or "").lower()
+                if name in ("archive", "in-place archive", "archief"):
+                    return folder["id"]
+    except Exception as e:
+        # Archive search is best-effort — primary mailbox purge still works
+        pass
+    return None
 
 
 async def get_archive_child_folders(user_email: str, archive_folder_id: str) -> List[Dict]:
