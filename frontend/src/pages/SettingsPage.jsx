@@ -62,13 +62,20 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       const res = await generateCert(orgId);
-      // Download the .cer file
-      const blob = new Blob([res.data], { type: "application/x-x509-ca-cert" });
+      const { cer_base64, filename, thumbprint } = res.data;
+
+      // Decode base64 to blob and download
+      const byteChars = atob(cer_base64);
+      const byteNums = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNums[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNums);
+      const blob = new Blob([byteArray], { type: "application/x-x509-ca-cert" });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = res.headers["content-disposition"]
-        ?.match(/filename="?([^"]+)"?/)?.[1] || `cert_${orgId}.cer`;
+      a.download = filename || `cert_${orgId}.cer`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -76,9 +83,9 @@ export default function SettingsPage() {
 
       setMessage({
         type: "success",
-        text: "Certificate generated! Upload the downloaded .cer file to Azure AD → App Registration → Certificates & secrets."
+        text: `Certificate generated! (${thumbprint.substring(0, 16)}...)\nUpload the downloaded .cer file to Azure AD → App Registration → Certificates & secrets.`
       });
-      loadOrgs(); // Refresh to show thumbprint
+      loadOrgs();
     } catch (e) {
       setMessage({ type: "error", text: e.response?.data?.detail || e.message });
     } finally {

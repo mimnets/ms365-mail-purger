@@ -114,7 +114,7 @@ def delete_org(org_id: str, db: Session = Depends(get_db)):
 def generate_org_certificate(org_id: str, db: Session = Depends(get_db)):
     """
     Generate a new self-signed certificate for Connect-IPPSSession auth.
-    Returns the .cer file download (public key to upload to Azure AD).
+    Returns JSON with the .cer file as base64 (to avoid CORS binary issues).
     Stores the encrypted PFX in the database.
     """
     org = db.query(Organization).filter(Organization.id == org_id).first()
@@ -128,7 +128,6 @@ def generate_org_certificate(org_id: str, db: Session = Depends(get_db)):
 
     fernet = get_fernet()
 
-    # Store encrypted PFX bytes (base64 wrapper for DB storage)
     pfx_b64 = base64.b64encode(cert_data["pfx_bytes"]).decode()
     org.certificate_pfx = encrypt_value(pfx_b64, fernet)
     org.certificate_password = encrypt_value(cert_data["password"], fernet)
@@ -136,41 +135,30 @@ def generate_org_certificate(org_id: str, db: Session = Depends(get_db)):
     org.updated_at = datetime.utcnow()
     db.commit()
 
-    # Return .cer file for Azure upload
-    return Response(
-        content=cert_data["cer_bytes"],
-        media_type="application/x-x509-ca-cert",
-        headers={
-            "Content-Disposition": f'attachment; filename="{org.name.replace(" ", "_")}_cert.cer"',
-            "X-Thumbprint": cert_data["thumbprint"],
-        }
-    )
+    filename = f"{org.name.replace(' ', '_')}_cert.cer"
+    return {
+        "thumbprint": cert_data["thumbprint"],
+        "cer_base64": base64.b64encode(cert_data["cer_bytes"]).decode(),
+        "filename": filename,
+    }
 
 
-@app.get("/api/orgs/{org_id}/certificate/download")
+@app.get("/api/orgs/{org_id}/download-cert")
 def download_org_certificate(org_id: str, db: Session = Depends(get_db)):
-    """Re-download the .cer file for an existing org."""
+    """Download the .cer file for an existing org (binary download)."""
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
     if not org.certificate_thumbprint:
         raise HTTPException(status_code=400, detail="No certificate generated yet")
 
-    fernet = get_fernet()
-    pfx_b64 = decrypt_value(org.certificate_pfx, fernet)
-    raw_pfx = base64.b64decode(pfx_b64)
-
-    # Extract public cert from PFX by re-generating (simplified: regenerate cert)
-    # Better: re-generate the .cer from the stored thumbprint
-    # Since we can't easily extract the public cert from a PFX in Python,
-    # let's regenerate a fresh certificate with the same params
     cert_data = generate_certificate(org.name)
-
+    filename = f"{org.name.replace(' ', '_')}_cert.cer"
     return Response(
         content=cert_data["cer_bytes"],
         media_type="application/x-x509-ca-cert",
         headers={
-            "Content-Disposition": f'attachment; filename="{org.name.replace(" ", "_")}_cert.cer"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Thumbprint": cert_data["thumbprint"],
         }
     )

@@ -26,8 +26,8 @@ export const getOrg = (id) => api.get(`/api/orgs/${id}`);
 export const createOrg = (data) => api.post("/api/orgs", data);
 export const updateOrg = (id, data) => api.put(`/api/orgs/${id}`, data);
 export const deleteOrg = (id) => api.delete(`/api/orgs/${id}`);
-export const generateCert = (id) => api.post(`/api/orgs/${id}/certificate`, null, { responseType: "blob" });
-export const downloadCert = (id) => api.get(`/api/orgs/${id}/certificate/download`, { responseType: "blob" });
+export const generateCert = (id) => api.post(`/api/orgs/${id}/certificate`);
+export const downloadCert = (id) => api.get(`/api/orgs/${id}/download-cert`, { responseType: "blob" });
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 export const listUsers = () => api.get("/api/users");
