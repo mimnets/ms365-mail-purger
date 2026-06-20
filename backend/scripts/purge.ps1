@@ -31,11 +31,34 @@ try {
 
     Write-Output "STATUS|Connecting to $Organization"
 
-    # Use pre-acquired access token (bypasses cert auth + session setup bugs on Linux)
+    # Connect to compliance endpoint - try RPS mode for full cmdlet availability
+    Write-Output "STATUS|Connecting to compliance endpoint..."
     Connect-IPPSSession `
         -AccessToken $AccessToken `
         -Organization $Organization `
+        -UseRPSSession `
         -ErrorAction Stop
+    
+    # Verify compliance cmdlets loaded
+    $searcCmd = Get-Command -Name "New-ComplianceSearch" -ErrorAction SilentlyContinue
+    if (-not $searcCmd) {
+        # Try Connect-IPPSSession without UseRPSSession
+        Write-Output "STATUS|Retrying without UseRPSSession..."
+        Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+        Connect-IPPSSession `
+            -AccessToken $AccessToken `
+            -Organization $Organization `
+            -ErrorAction Stop
+        $searcCmd = Get-Command -Name "New-ComplianceSearch" -ErrorAction SilentlyContinue
+    }
+    
+    if (-not $searcCmd) {
+        # List available cmdlets for debugging
+        $cmds = Get-Command -Module ExchangeOnlineManagement -Name "*Compliance*" | Select-Object -ExpandProperty Name
+        Write-Output "STATUS|Available Compliance* cmdlets: $($cmds -join ', ')"
+        throw "New-ComplianceSearch cmdlet could not be loaded after connecting"
+    }
+    Write-Output "STATUS|Connected. New-ComplianceSearch available."
 
     Write-Output "STATUS|Connected"
 
