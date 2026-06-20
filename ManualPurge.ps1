@@ -11,9 +11,15 @@ param(
     [int]$BatchSize = 10
 )
 
-# Step 1: Connect (use Connect-IPPSSession for compliance cmdlets)
+# Step 1: Connect to Security & Compliance
 Write-Host "Connecting to Security & Compliance..." -ForegroundColor Cyan
-Connect-IPPSSession -UserPrincipalName $UserEmail -UseRPSSession
+try {
+    # Try with EnableSearchOnlySession first (v3.9.0+)
+    Connect-IPPSSession -UserPrincipalName $UserEmail -EnableSearchOnlySession -ErrorAction Stop
+} catch {
+    Write-Host "Trying without EnableSearchOnlySession..." -ForegroundColor Yellow
+    Connect-IPPSSession -UserPrincipalName $UserEmail -ErrorAction Stop
+}
 
 # Step 2: Split date range into weekly chunks
 $start = [DateTime]::ParseExact($DateFrom, "yyyy-MM-dd", $null)
