@@ -33,12 +33,21 @@ try {
     # Load certificate from PFX file (Linux-compatible)
     $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath, $CertPass)
 
-    Connect-IPPSSession `
-        -AppId $AppId `
-        -Certificate $cert `
-        -Organization $Organization `
-        -EnableSearchOnlySession `
-        -ErrorAction Stop
+    try {
+        Connect-IPPSSession `
+            -AppId $AppId `
+            -Certificate $cert `
+            -Organization $Organization `
+            -ErrorAction Stop
+    } catch {
+        Write-Output "STATUS|Object cert failed, trying file path..."
+        Connect-IPPSSession `
+            -AppId $AppId `
+            -CertificateFilePath $CertPath `
+            -CertificatePassword $secPass `
+            -Organization $Organization `
+            -ErrorAction Stop
+    }
 
     Write-Output "STATUS|Connected"
 
