@@ -29,23 +29,17 @@ try {
     $secPass = ConvertTo-SecureString -String $CertPass -AsPlainText -Force
 
     Write-Output "STATUS|Connecting to $Organization"
-    try {
-        Connect-IPPSSession `
-            -AppId $AppId `
-            -CertificateFilePath $CertPath `
-            -CertificatePassword $secPass `
-            -Organization $Organization `
-            -ErrorAction Stop
-    } catch {
-        Write-Output "STATUS|REST mode failed, trying RPS mode..."
-        Connect-IPPSSession `
-            -AppId $AppId `
-            -CertificateFilePath $CertPath `
-            -CertificatePassword $secPass `
-            -Organization $Organization `
-            -UseRPSSession `
-            -ErrorAction Stop
-    }
+
+    # Load certificate as .NET object (different code path from -CertificateFilePath)
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
+    $cert.Import($CertPath, $CertPass, 'Exportable')
+
+    Connect-IPPSSession `
+        -AppId $AppId `
+        -Certificate $cert `
+        -Organization $Organization `
+        -EnableSearchOnlySession `
+        -ErrorAction Stop
 
     Write-Output "STATUS|Connected"
 
