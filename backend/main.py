@@ -305,3 +305,68 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+@app.get("/api/debug/test-connection/{org_id}")
+def debug_test_connection(org_id: str, db: Session = Depends(get_db)):
+    """Test Connect-IPPSSession connection with stored creds and return full output."""
+    import subprocess, tempfile, base64, os
+    from cert_utils import decrypt_value, get_fernet
+    from models import Organization
+    
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        return {"error": "Org not found"}
+    
+    fernet = get_fernet()
+    pfx_b64 = decrypt_value(org.certificate_pfx, fernet)
+    cert_pass = decrypt_value(org.certificate_password, fernet)
+    raw_pfx = base64.b64decode(pfx_b64)
+    
+    fd, cert_path = tempfile.mkstemp(suffix=".pfx")
+    os.write(fd, raw_pfx)
+    os.close(fd)
+    
+    test_script = f'''
+$ErrorActionPreference = "Stop"
+try {{
+    Import-Module ExchangeOnlineManagement -Force
+    Write-Output "MODULE_OK"
+    
+    $secPass = ConvertTo-SecureString -String "{cert_pass}" -AsPlainText -Force
+    
+    Write-Output "Connecting with AppId={org.app_client_id} Org={org.tenant_domain}"
+    Connect-IPPSSession -AppId "{org.app_client_id}" -CertificateFilePath "{cert_path}" -CertificatePassword $secPass -Organization "{org.tenant_domain}" -ErrorAction Stop -Verbose 4>&1
+    Write-Output "CONNECT_OK"
+    
+    Write-Output "Testing compliance search..."
+    $searchName = "Test_Conn_$(Get-Date -Format 'yyyyMMddHHmmss')"
+    New-ComplianceSearch -Name $searchName -ExchangeLocation "monir.it@vclbd.net" -ContentMatchQuery "received:01/01/2025..01/02/2025" -ErrorAction Stop | Out-Null
+    Write-Output "SEARCH_CREATED"
+    
+    Remove-ComplianceSearch -Identity $searchName -Confirm:$false -ErrorAction SilentlyContinue
+    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+    
+}} catch {{
+    Write-Output "ERROR|$_"
+    exit 1
+}}
+'''
+    
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-Command", test_script],
+        capture_output=True, text=True, timeout=120
+    )
+    
+    # Cleanup
+    try: os.unlink(cert_path)
+    except: pass
+    
+    return {
+        "exit_code": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "org_name": org.name,
+        "app_id": org.app_client_id,
+        "tenant_domain": org.tenant_domain,
+        "cert_thumbprint": org.certificate_thumbprint,
+    }
