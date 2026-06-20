@@ -11,9 +11,9 @@ param(
     [int]$BatchSize = 10
 )
 
-# Step 1: Connect
-Write-Host "Connecting to Exchange Online..." -ForegroundColor Cyan
-Connect-ExchangeOnline -UserPrincipalName $UserEmail
+# Step 1: Connect (use Connect-IPPSSession for compliance cmdlets)
+Write-Host "Connecting to Security & Compliance..." -ForegroundColor Cyan
+Connect-IPPSSession -UserPrincipalName $UserEmail -UseRPSSession
 
 # Step 2: Split date range into weekly chunks
 $start = [DateTime]::ParseExact($DateFrom, "yyyy-MM-dd", $null)
@@ -81,4 +81,4 @@ Write-Host "`n=== COMPLETE ===" -ForegroundColor Cyan
 Write-Host "Total found: $totalFound" -ForegroundColor Yellow
 Write-Host "Total deleted: $totalDeleted" -ForegroundColor Green
 
-Disconnect-ExchangeOnline -Confirm:$false
+Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
