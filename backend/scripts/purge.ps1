@@ -62,14 +62,20 @@ try {
         $dateFilter = "received:$($startDate.ToString('MM/dd/yyyy'))..$($chunkEnd.ToString('MM/dd/yyyy'))"
         Write-Output "STATUS|Creating compliance search: $searchName"
 
-        New-ComplianceSearch `
-            -Name $searchName `
-            -ExchangeLocation $Email `
-            -ContentMatchQuery $dateFilter `
-            -AllowNotFoundExchangeLocationsEnabled $false `
-            -ErrorAction Stop | Out-Null
+        Write-Output "SEARCHCMD|$searchName|$Email|$dateFilter"
+        try {
+            New-ComplianceSearch `
+                -Name $searchName `
+                -ExchangeLocation $Email `
+                -ContentMatchQuery $dateFilter `
+                -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Output "ERROR|New-ComplianceSearch: $_"
+            continue
+        }
 
         $searchNames += $searchName
+        Write-Output "STATUS|Starting search: $searchName"
         Start-ComplianceSearch -Identity $searchName -ErrorAction Stop | Out-Null
 
         # ── Wait for search to complete ───────────────────────────────
