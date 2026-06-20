@@ -1,6 +1,34 @@
 # M365 Mail Purger
 
-Web app for M365 admins to bulk-delete emails from any tenant mailbox by date range. Uses Microsoft Graph API with Celery background workers and a live progress dashboard.
+Web app for M365 admins to bulk-delete emails from any user's mailbox
+**including in-place archive**. Uses Microsoft Purview compliance search
+via Connect-IPPSSession (PowerShell on Linux) with a live progress dashboard.
+
+---
+
+## Architecture
+
+```
+Browser (React)
+    │  polls every 3s
+    ▼
+FastAPI (port 8000)
+    │  dispatches task
+    ▼
+Celery Worker ──── Redis (queue)
+    │  spawns pwsh subprocess
+    ▼
+PowerShell Core (on Linux)
+    │  Connect-IPPSSession
+    │  New-ComplianceSearch
+    │  New-ComplianceSearchAction -Purge
+    ▼
+M365 Tenant (primary mailbox + in-place archive)
+```
+
+**Key difference from v1:** This version uses **Connect-IPPSSession** (Purview compliance
+PowerShell) instead of plain Graph API. This allows purging emails from the
+**in-place archive**, which Graph API cannot do.
 
 ---
 
@@ -8,103 +36,37 @@ Web app for M365 admins to bulk-delete emails from any tenant mailbox by date ra
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 - Microsoft 365 tenant with Global Admin access
-- Azure App Registration (see below)
+- Azure App Registration (see Setup Guide in-app or steps below)
 
 ---
 
-## Step 1 — Get Azure Credentials
+## Quick Start
 
-### 1.1 Create the App Registration
+### 1. Configure Environment
 
-1. Go to [portal.azure.com](https://portal.azure.com) and sign in as **Global Admin**
-2. Search for **"App registrations"** in the top search bar → click it
-3. Click **New registration**
-4. Fill in:
-   - **Name:** `M365 Mail Purger`
-   - **Supported account types:** `Accounts in this organizational directory only`
-   - **Redirect URI:** Platform = `Web`, URL = `http://localhost:8000/api/auth/callback`
-5. Click **Register**
+Copy `.env.example` to `.env` and set the encryption key:
 
-### 1.2 Copy CLIENT_ID and TENANT_ID
+```bash
+cp .env.example .env
 
-On the app's **Overview** page:
+# Generate a strong encryption key
+python3 -c "import secrets; print(secrets.token_hex(32))"
+# Copy the output into .env as ENCRYPTION_KEY
+```
 
-| Value | Where |
-|---|---|
-| `CLIENT_ID` | "Application (client) ID" field |
-| `TENANT_ID` | "Directory (tenant) ID" field |
-
-Copy both — you'll need them in `.env`.
-
-### 1.3 Create a Client Secret
-
-1. Left sidebar → **Certificates & secrets**
-2. Click **New client secret**
-3. Description: `mail-purger-secret`, Expiry: `24 months`
-4. Click **Add**
-5. **Copy the `Value` immediately** — it's hidden after you leave this page
-   - This is your `CLIENT_SECRET`
-
-### 1.4 Add API Permissions
-
-1. Left sidebar → **API permissions**
-2. Click **Add a permission → Microsoft Graph → Application permissions**
-3. Search and add each of these:
-
-   | Permission | Purpose |
-   |---|---|
-   | `Mail.ReadWrite` | Read and delete emails |
-   | `Mail.ReadWrite.Shared` | Shared mailbox access |
-   | `User.Read.All` | List all users/mailboxes |
-   | `MailboxSettings.Read` | Read mailbox metadata |
-   | `Reports.Read.All` | Mailbox usage stats |
-
-4. After adding all 5, click **Grant admin consent for [your tenant]**
-5. Confirm — all permissions must show a **green checkmark** under Status
-
-> **Important:** Without admin consent, all Graph API calls will return `403 Forbidden`.
-
----
-
-## Step 2 — Configure Environment
-
-Edit the `.env` file in the project root:
+Your `.env` should look like:
 
 ```env
-# Azure App Registration
-CLIENT_ID=paste-your-client-id-here
-CLIENT_SECRET=paste-your-client-secret-here
-TENANT_ID=paste-your-tenant-id-here
-
-# Auth
-REDIRECT_URI=http://localhost:8000/api/auth/callback
-FRONTEND_URL=http://localhost:3000
-SESSION_SECRET=generate-a-random-32-char-string
-
-# Redis (leave as-is for Docker)
+ENCRYPTION_KEY=your-64-char-hex-string-here
+ADMIN_EMAIL=your-admin@yourorg.com
 REDIS_URL=redis://redis:6379/0
-
-# Database
-DATABASE_URL=sqlite:///./purger.db
-
-# Admin email
-ADMIN_EMAIL=your-admin@yourtenant.com
+DATABASE_URL=sqlite:///./data/purger.db
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
-Generate a random `SESSION_SECRET`:
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
----
-
-## Step 3 — Build and Run
+### 2. Build and Run
 
 ```bash
-# From project root
-cd /path/to/ms365-mail-purger
-
-# Build and start all services (first run takes ~2 minutes to download images)
 docker-compose up --build
 ```
 
@@ -114,37 +76,54 @@ This starts 4 services:
 |---|---|---|
 | `frontend` | http://localhost:3000 | React UI |
 | `backend` | http://localhost:8000 | FastAPI |
-| `worker` | — | Celery background task runner |
-| `redis` | localhost:6379 | Task queue + result backend |
+| `worker` | — | Celery + pwsh task runner |
+| `redis` | localhost:6379 | Task queue |
 
-### Verify everything is up
+First build takes **~5 minutes** (installing PowerShell Core + ExchangeOnlineManagement).
 
-```bash
-# Check all containers running
-docker-compose ps
+### 3. Configure an Organization via the UI
 
-# Backend API docs (Swagger UI)
-open http://localhost:8000/docs
+1. Open http://localhost:3000
+2. Go to **Settings** → **Add Organization**
+3. Enter your Azure AD details:
+   - Organization name (e.g. "VCL Bangladesh")
+   - Tenant ID (Directory ID from Azure)
+   - Tenant domain (e.g. `vclbd.onmicrosoft.com`)
+   - App (Client) ID
+   - Admin UPN (your admin email)
+4. Click **Generate Certificate** — downloads a `.cer` file
+5. **Upload the `.cer` to Azure AD**:
+   - Azure portal → App Registrations → your app → Certificates & secrets → Certificates → Upload
+6. Grant API permissions & assign eDiscovery Manager role (see Setup Guide in the app)
 
-# Frontend
-open http://localhost:3000
-```
+### 4. Start Purging
+
+1. Go to **Purge** tab
+2. Select your organization
+3. Select a mailbox
+4. Pick a date range
+5. Click **Preview Count** to see how many emails match
+6. Click **Start Purge**
+7. Watch the live dashboard
 
 ---
 
-## Step 4 — Using the App
+## PowerShell Purge Flow
 
-1. Open `http://localhost:3000`
-2. Go to **Purge** tab
-3. Select a mailbox from the dropdown
-4. Set **Date From** and **Date To**
-5. Click **Preview Count** — shows how many emails match
-6. Click **Start Purge** — redirects to live dashboard
-7. Dashboard auto-refreshes every 3 seconds showing:
-   - Total found / deleted / remaining
-   - Progress bar
-   - ETA
-   - Stop button (halts the job mid-run)
+Each purge job:
+
+1. Reads encrypted certificate from DB → writes temp `.pfx` file
+2. Spawns `pwsh` → runs `Connect-IPPSSession` with certificate auth
+3. Splits date range into **weekly chunks**
+4. For each chunk:
+   - Creates `New-ComplianceSearch`
+   - Waits for search to complete
+   - Creates `New-ComplianceSearchAction -Purge` (soft delete, 10 items per action)
+   - Reports progress back to Python via stdout
+5. Cleans up compliance artifacts
+6. Python updates DB → frontend polls for live status
+
+**Coverage:** Searches and purges from **both primary mailbox and in-place archive**.
 
 ---
 
@@ -170,45 +149,39 @@ docker-compose down -v
 
 ---
 
+## Security Notes
+
+- `.env` is in `.gitignore` — never commit it
+- Certificates are **encrypted at rest** in SQLite using Fernet (AES-128-CBC)
+- The `ENCRYPTION_KEY` in `.env` is the master key — protect it
+- Temp cert files are written to `/tmp` and cleaned up after each job
+- Compliance searches and actions are cleaned up after each purge
+- Test with a small date range first before purging large mailboxes
+
+---
+
 ## Common Errors
 
 | Error | Cause | Fix |
 |---|---|---|
-| `AADSTS700016` | Wrong `CLIENT_ID` or wrong tenant | Double-check both IDs in `.env` |
-| `403 Forbidden` from Graph | Admin consent not granted | Azure portal → API Permissions → Grant admin consent |
-| `401 Unauthorized` | Wrong scope or wrong permission type | Ensure Application permissions (not Delegated) are used |
-| `400 Bad Request` on filter | Bad date format | Use `YYYY-MM-DD` in the UI date pickers |
-| `429 Too Many Requests` | Graph rate limit hit | App handles this automatically with `Retry-After` backoff |
-| Celery tasks stuck in QUEUED | Redis not reachable | Check `docker-compose ps` — redis container must be running |
-| Frontend can't reach backend | CORS or backend down | Confirm backend is on port 8000; check `docker-compose logs backend` |
+| `AADSTS700016` | Wrong CLIENT_ID | Check App ID in Azure portal |
+| `403 Forbidden` in compliance | Admin consent not granted | Azure → API Permissions → Grant consent |
+| `eDiscovery Manager role required` | Role not assigned | Purview portal → Permissions → eDiscovery Manager |
+| `Certificate not found` | Cert not uploaded to Azure | Upload .cer to App Registration |
+| No users showing | Graph API permissions | Check Mail.ReadWrite + User.Read.All are granted |
+| Purge stuck at QUEUED | Redis down | Check `docker-compose ps` |
+| `pwsh: command not found` | Docker build issue | Rebuild with `docker-compose up --build` |
 
 ---
 
-## Architecture
+## Graph API vs Connect-IPPSSession
 
-```
-Browser (React)
-    │  polls every 3s
-    ▼
-FastAPI (port 8000)
-    │  dispatches task
-    ▼
-Celery Worker ──── Redis (queue + results)
-    │
-    ▼
-Microsoft Graph API
-    │
-    ▼
-M365 Tenant Mailboxes
-```
-
-**Delete behavior:** Graph API `DELETE /messages/{id}` is a **soft delete** — moves email to Recoverable Items. Permanently purged after 14–30 days per tenant retention policy.
-
----
-
-## Security Notes
-
-- `.env` is in `.gitignore` — never commit it
-- `CLIENT_SECRET` expires in 24 months — rotate before expiry in Azure portal
-- App uses **Application permissions** (no per-user login needed for Graph calls)
-- Admin OAuth login is for UI authentication only
+| Feature | Graph API (v1) | Connect-IPPSSession (v2 ✓) |
+|---|---|---|
+| Primary mailbox delete | ✅ | ✅ |
+| In-place archive delete | ❌ | ✅ |
+| Requires PowerShell | ❌ | ✅ (pwsh on Linux) |
+| Delete method | `DELETE /messages/{id}` | Compliance search + purge action |
+| Items per delete action | 1 per request | 10 per purge action |
+| Rate limit | 10K req/10 min | Compliance: 50 searches/day, unlimited purges |
+| Soft/hard delete | Soft only | Soft (and hard with appropriate licensing) |

@@ -1,7 +1,8 @@
-from sqlalchemy import Column, String, Integer, DateTime, Enum
+from sqlalchemy import Column, String, Integer, DateTime, Text
 from sqlalchemy.sql import func
 from database import Base
 import enum
+
 
 class JobStatus(str, enum.Enum):
     QUEUED = "QUEUED"
@@ -11,10 +12,12 @@ class JobStatus(str, enum.Enum):
     FAILED = "FAILED"
     STOPPED = "STOPPED"
 
+
 class PurgeJob(Base):
     __tablename__ = "purge_jobs"
 
     id = Column(String, primary_key=True)
+    org_id = Column(String, nullable=False, index=True)
     user_email = Column(String, nullable=False, index=True)
     date_from = Column(String, nullable=False)
     date_to = Column(String, nullable=False)
@@ -28,3 +31,20 @@ class PurgeJob(Base):
     completed_at = Column(DateTime, nullable=True)
     error_message = Column(String, nullable=True)
     celery_task_id = Column(String, nullable=True)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    tenant_id = Column(String, nullable=False)
+    tenant_domain = Column(String, nullable=False)
+    app_client_id = Column(String, nullable=False)
+    admin_upn = Column(String, nullable=False)
+    # Encrypted fields (base64-encoded Fernet encrypted)
+    certificate_pfx = Column(Text, nullable=True)
+    certificate_password = Column(Text, nullable=True)
+    certificate_thumbprint = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())

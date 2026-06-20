@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getHistory, deleteJob } from "../api/client";
+import { getHistory, deleteJobRecord } from "../api/client";
 import { useNavigate } from "react-router-dom";
 
 const STATUS_COLORS = {
@@ -30,7 +30,7 @@ export default function HistoryPage() {
       return;
     }
     if (!confirm("Delete this job record?")) return;
-    await deleteJob(jobId);
+    await deleteJobRecord(jobId);
     load();
   };
 
