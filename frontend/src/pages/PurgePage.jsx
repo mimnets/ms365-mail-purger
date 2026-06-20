@@ -15,6 +15,17 @@ export default function PurgePage() {
   const [purging, setPurging] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [userSearch, setUserSearch] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  const filteredUsers = users.filter(u => {
+    const q = userSearch.toLowerCase();
+    return (
+      u.displayName?.toLowerCase().includes(q) ||
+      u.mail?.toLowerCase().includes(q) ||
+      u.userPrincipalName?.toLowerCase().includes(q)
+    );
+  });
 
   useEffect(() => {
     getOrgs().then(res => {
@@ -25,9 +36,9 @@ export default function PurgePage() {
 
   const loadUsers = async () => {
     if (!selectedOrgId) return;
-    if (!selectedOrgId) return;
     setUsers([]);
     setSelectedEmail("");
+    setUserSearch("");
     try {
       const res = await listUsers();
       setUsers(res.data.users || []);
@@ -101,7 +112,7 @@ export default function PurgePage() {
             <select
               className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
               value={selectedOrgId}
-              onChange={e => { setSelectedOrgId(e.target.value); setPreview(null); setError(null); }}
+              onChange={e => { setSelectedOrgId(e.target.value); setPreview(null); setError(null); setUserSearch(""); }}
             >
               <option value="">-- Select organization --</option>
               {orgs.map(o => (
@@ -115,20 +126,51 @@ export default function PurgePage() {
 
         {selectedOrgId && (
           <>
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Select Mailbox</label>
-              <select
+            <div className="relative">
+              <label className="block text-sm text-gray-400 mb-1">Search & Select Mailbox</label>
+              <input
+                type="text"
+                placeholder="Type to search users..."
+                value={selectedEmail && !userSearch ? users.find(u => (u.mail || u.userPrincipalName) === selectedEmail)?.displayName + ` (${selectedEmail})` || selectedEmail : userSearch}
+                onChange={e => {
+                  const val = e.target.value;
+                  setUserSearch(val);
+                  if (!val) { setSelectedEmail(''); setShowDropdown(false); return; }
+                  setShowDropdown(true);
+                }}
+                onFocus={() => { if (userSearch) setShowDropdown(true); }}
+                onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
-                value={selectedEmail}
-                onChange={e => { setSelectedEmail(e.target.value); setPreview(null); setError(null); }}
-              >
-                <option value="">-- Select user --</option>
-                {users.map(u => (
-                  <option key={u.id} value={u.mail || u.userPrincipalName}>
-                    {u.displayName} ({u.mail || u.userPrincipalName})
-                  </option>
-                ))}
-              </select>
+              />
+              {showDropdown && (
+                <div className="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-700 rounded max-h-60 overflow-y-auto shadow-lg">
+                  {filteredUsers.length === 0 ? (
+                    <div className="px-3 py-2 text-gray-500 text-sm">No users match</div>
+                  ) : (
+                    filteredUsers.map(u => (
+                      <div
+                        key={u.id}
+                        className={`px-3 py-2 cursor-pointer text-sm hover:bg-gray-700 ${selectedEmail === (u.mail || u.userPrincipalName) ? 'bg-gray-700 text-white' : 'text-gray-300'}`}
+                        onMouseDown={() => {
+                          setSelectedEmail(u.mail || u.userPrincipalName);
+                          setUserSearch(u.displayName + ' (' + (u.mail || u.userPrincipalName) + ')');
+                          setShowDropdown(false);
+                          setPreview(null);
+                          setError(null);
+                        }}
+                      >
+                        <span className="font-medium">{u.displayName}</span>
+                        <span className="text-gray-500 ml-2 text-xs">{u.mail || u.userPrincipalName}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+              {selectedEmail && !showDropdown && (
+                <div className="mt-1 text-xs text-green-400">
+                  Selected: {selectedEmail}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-4">
