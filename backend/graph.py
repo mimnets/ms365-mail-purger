@@ -120,11 +120,8 @@ async def get_archive_folder_id(user_email: str) -> Optional[str]:
     Returns the archive folder ID, or None if no archive is configured.
     """
     url = f"{GRAPH_BASE}/users/{user_email}/mailFolders"
-    params = {
-        "$filter": "wellKnownName eq 'archive'",
-        "$select": "id,displayName,wellKnownName",
-        "$top": 1,
-    }
+    # wellKnownName is NOT filterable in Graph API, so fetch all and filter locally
+    params = {"$select": "id,displayName,wellKnownName", "$top": 50}
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url, headers=_headers(), params=params)
@@ -134,8 +131,9 @@ async def get_archive_folder_id(user_email: str) -> Optional[str]:
             return await get_archive_folder_id(user_email)
         resp.raise_for_status()
         folders = resp.json().get("value", [])
-        if folders:
-            return folders[0]["id"]
+        for folder in folders:
+            if folder.get("wellKnownName") == "archive":
+                return folder["id"]
         return None
 
 

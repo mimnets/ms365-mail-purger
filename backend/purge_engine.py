@@ -210,15 +210,13 @@ async def find_archive_folder_id(
 ) -> Optional[str]:
     """Find the in-place archive folder ID for a user. Returns None if not available."""
     url = f"{GRAPH_BASE}/users/{user_email}/mailFolders"
-    params = {
-        "$filter": "wellKnownName eq 'archive'",
-        "$select": "id,displayName,wellKnownName",
-        "$top": 1,
-    }
+    # wellKnownName is NOT filterable in Graph API — fetch all and filter locally
+    params = {"$select": "id,displayName,wellKnownName", "$top": 50}
     data = await _graph_get(url, access_token, params)
     folders = data.get("value", [])
-    if folders:
-        return folders[0]["id"]
+    for folder in folders:
+        if folder.get("wellKnownName") == "archive":
+            return folder["id"]
     return None
 
 
