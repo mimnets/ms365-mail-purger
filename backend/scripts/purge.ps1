@@ -30,9 +30,8 @@ try {
 
     Write-Output "STATUS|Connecting to $Organization"
 
-    # Load certificate as .NET object (different code path from -CertificateFilePath)
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2
-    $cert.Import($CertPath, $CertPass, 'Exportable')
+    # Load certificate from PFX file (Linux-compatible)
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath, $CertPass)
 
     Connect-IPPSSession `
         -AppId $AppId `
