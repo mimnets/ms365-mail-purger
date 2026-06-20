@@ -2,14 +2,47 @@
 
 import os
 import base64
-import tempfile
+import hashlib
+import datetime
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet
-import datetime
+
+
+def _derive_fernet_key(raw: str) -> bytes:
+    """
+    Derive a valid 32-byte URL-safe base64 Fernet key from an arbitrary string.
+    Uses SHA256 to get 32 bytes, then base64-encodes them.
+    """
+    raw_bytes = raw.encode("utf-8")
+    digest = hashlib.sha256(raw_bytes).digest()  # 32 bytes
+    return base64.urlsafe_b64encode(digest)       # 44 base64 chars
+
+
+def get_fernet(key: str = None) -> Fernet:
+    """Get a Fernet instance. If no key, use ENCRYPTION_KEY from env."""
+    if not key:
+        key = os.getenv("ENCRYPTION_KEY")
+        if not key:
+            raise ValueError("ENCRYPTION_KEY not set and no key provided")
+    return Fernet(_derive_fernet_key(key))
+
+
+def encrypt_value(plain_text: str, fernet: Fernet = None) -> str:
+    """Encrypt a string returning a base64 blob."""
+    if fernet is None:
+        fernet = get_fernet()
+    return fernet.encrypt(plain_text.encode()).decode()
+
+
+def decrypt_value(encrypted: str, fernet: Fernet = None) -> str:
+    """Decrypt a base64 blob back to a string."""
+    if fernet is None:
+        fernet = get_fernet()
+    return fernet.decrypt(encrypted.encode()).decode()
 
 
 def generate_certificate(org_name: str) -> dict:
@@ -21,14 +54,12 @@ def generate_certificate(org_name: str) -> dict:
       - password:   the random password used to protect the PFX
       - thumbprint: SHA-1 thumbprint
     """
-    # Generate RSA key pair
     key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
         backend=default_backend()
     )
 
-    # Create self-signed cert
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, f"M365 Mail Purger - {org_name}"),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, org_name),
@@ -63,17 +94,10 @@ def generate_certificate(org_name: str) -> dict:
         .sign(key, hashes.SHA256(), backend=default_backend())
     )
 
-    # Generate a random password for the PFX
+    # Random password for the PFX
     password = base64.b64encode(os.urandom(24)).decode()
 
-    # Export PFX (private key + cert, encrypted)
-    pfx_bytes = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
-    )
-    # For Connect-IPPSSession, we actually need the PFX format (PKCS12)
-    # Let's create a PKCS12 blob
+    # PKCS12 / PFX — the format Connect-IPPSSession needs on Linux
     from cryptography.hazmat.primitives.serialization import pkcs12
     pfx_bytes = pkcs12.serialize_key_and_certificates(
         name=f"M365 Mail Purger - {org_name}".encode(),
@@ -83,10 +107,10 @@ def generate_certificate(org_name: str) -> dict:
         encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
     )
 
-    # Export .cer (public cert only, DER format for Azure upload)
+    # Public cert in DER format (for Azure upload)
     cer_bytes = cert.public_bytes(serialization.Encoding.DER)
 
-    # Get thumbprint
+    # SHA-1 thumbprint
     thumbprint = cert.fingerprint(hashes.SHA1()).hex()
 
     return {
@@ -95,49 +119,3 @@ def generate_certificate(org_name: str) -> dict:
         "password": password,
         "thumbprint": thumbprint,
     }
-
-
-def get_fernet(key: str = None) -> Fernet:
-    """Get a Fernet instance. If no key, use ENCRYPTION_KEY from env."""
-    if not key:
-        key = os.getenv("ENCRYPTION_KEY")
-        if not key:
-            raise ValueError("ENCRYPTION_KEY not set and no key provided")
-    # Fernet keys must be 32 base64-encoded bytes
-    if len(key) < 32:
-        # Derive a proper key
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"m365-mail-purger-salt",
-            iterations=100000,
-        )
-        key_bytes = base64.urlsafe_b64encode(kdf.derive(key.encode()))
-    else:
-        # Use as-is if long enough
-        key_bytes = key.encode() if isinstance(key, str) else key
-        if len(key_bytes) < 44:
-            # Pad to valid base64
-            key_bytes = base64.urlsafe_b64encode(
-                hashlib.sha256(key_bytes).digest()
-            )
-
-    return Fernet(key_bytes)
-
-
-def encrypt_value(plain_text: str, fernet: Fernet = None) -> str:
-    """Encrypt a string to a base64 blob."""
-    if fernet is None:
-        fernet = get_fernet()
-    return fernet.encrypt(plain_text.encode()).decode()
-
-
-def decrypt_value(encrypted: str, fernet: Fernet = None) -> str:
-    """Decrypt a base64 blob back to string."""
-    if fernet is None:
-        fernet = get_fernet()
-    return fernet.decrypt(encrypted.encode()).decode()
-
-
-import hashlib
