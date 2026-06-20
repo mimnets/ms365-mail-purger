@@ -29,12 +29,23 @@ try {
     $secPass = ConvertTo-SecureString -String $CertPass -AsPlainText -Force
 
     Write-Output "STATUS|Connecting to $Organization"
-    Connect-IPPSSession `
-        -AppId $AppId `
-        -CertificateFilePath $CertPath `
-        -CertificatePassword $secPass `
-        -Organization $Organization `
-        -ErrorAction Stop
+    try {
+        Connect-IPPSSession `
+            -AppId $AppId `
+            -CertificateFilePath $CertPath `
+            -CertificatePassword $secPass `
+            -Organization $Organization `
+            -ErrorAction Stop
+    } catch {
+        Write-Output "STATUS|REST mode failed, trying RPS mode..."
+        Connect-IPPSSession `
+            -AppId $AppId `
+            -CertificateFilePath $CertPath `
+            -CertificatePassword $secPass `
+            -Organization $Organization `
+            -UseRPSSession `
+            -ErrorAction Stop
+    }
 
     Write-Output "STATUS|Connected"
 
