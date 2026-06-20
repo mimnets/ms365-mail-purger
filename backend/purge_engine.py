@@ -168,6 +168,23 @@ def purge_loop(self, job_id: str, org_id: str, user_email: str, date_from: str, 
 
         process.wait(timeout=60)
 
+        # ── Capture stderr (full) ───────────────────────────────────────────
+        stderr_out = ""
+        try:
+            stderr_out = process.stderr.read()
+            if stderr_out and len(stderr_out) > 3000:
+                stderr_out = stderr_out[:3000] + "... (truncated)"
+        except Exception:
+            pass
+
+        stdout_out = ""
+        try:
+            remaining_out = process.stdout.read()
+            if remaining_out:
+                stdout_out = remaining_out[:2000]
+        except Exception:
+            pass
+
         # ── Determine final status ──────────────────────────────────────────
         db.expire_all()
         job = db.query(PurgeJob).filter(PurgeJob.id == job_id).first()
@@ -181,13 +198,17 @@ def purge_loop(self, job_id: str, org_id: str, user_email: str, date_from: str, 
                     completed_at=datetime.utcnow()
                 )
             else:
-                stderr_out = process.stderr.read()[:1000]
-                err_msg = last_error or f"pwsh exited with code {process.returncode}"
+                err_parts = []
+                if last_error:
+                    err_parts.append(f"SCRIPT: {last_error}")
                 if stderr_out:
-                    err_msg += f" | {stderr_out}"
+                    err_parts.append(f"STDERR: {stderr_out}")
+                if stdout_out:
+                    err_parts.append(f"TAIL: {stdout_out}")
+                err_parts.append(f"EXIT: {process.returncode}")
                 _update_job(db, job_id,
                     status=JobStatus.FAILED,
-                    error_message=err_msg,
+                    error_message=" | ".join(err_parts),
                     completed_at=datetime.utcnow()
                 )
 

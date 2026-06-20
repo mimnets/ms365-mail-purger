@@ -173,7 +173,12 @@ try {
     Write-Output "DONE|$totalDeleted|$totalFound"
 
 } catch {
-    Write-Output "FATAL|$_"
+    $errMsg = ($_ | Out-String).Trim() -replace "`n"," | " -replace "`r",""
+    Write-Output "FATAL|$errMsg"
+    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+        $edMsg = $_.ErrorDetails.Message -replace "`n"," | " -replace "`r",""
+        Write-Output "FATAL|STACK: $edMsg"
+    }
     exit 1
 } finally {
     try {
