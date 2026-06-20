@@ -33,21 +33,14 @@ try {
     # Load certificate from PFX file (Linux-compatible)
     $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath, $CertPass)
 
-    try {
-        Connect-IPPSSession `
-            -AppId $AppId `
-            -Certificate $cert `
-            -Organization $Organization `
-            -ErrorAction Stop
-    } catch {
-        Write-Output "STATUS|Object cert failed, trying file path..."
-        Connect-IPPSSession `
-            -AppId $AppId `
-            -CertificateFilePath $CertPath `
-            -CertificatePassword $secPass `
-            -Organization $Organization `
-            -ErrorAction Stop
-    }
+    # Use Connect-ExchangeOnline with compliance endpoint URI
+    # (different internal code path from Connect-IPPSSession)
+    Connect-ExchangeOnline `
+        -AppId $AppId `
+        -Certificate $cert `
+        -Organization $Organization `
+        -ConnectionUri "https://ps.compliance.protection.outlook.com/powershell-liveid/" `
+        -ErrorAction Stop
 
     Write-Output "STATUS|Connected"
 
